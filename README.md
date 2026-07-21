@@ -1,14 +1,39 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_wanxiao_electricity
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+AstrBot 插件：查询完美校园中当前账号已绑定房间的水电信息。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## 配置
 
-# Supports
+在 AstrBot 插件配置页填写以下字符串配置。两项都保留为字符串，以免丢失前导零。
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+```json
+{
+  "school_code": "学校代码",
+  "student_account": "学号"
+}
+```
+
+未填写配置时插件仍可加载；执行命令会提示管理员完成配置。
+
+## 使用
+
+管理员发送：
+
+```text
+查水电
+```
+
+插件会先读取该账号绑定的房间，再依次查询每个房间的水费和电费。多房间时，某个房间查询失败不会阻断其他房间结果。
+
+## 依赖
+
+运行环境需要安装：
+
+```text
+aiohttp>=3.8,<4
+```
+
+## 参考
+
+- [AstrBot 插件开发指南](https://docs.astrbot.app/dev/star/plugin-new.html)
+- [完美校园 API 文档](https://s.apifox.cn/ad1e6ba6-6cd2-4b6e-88b2-a1ca1577e14c/folder-41557094)

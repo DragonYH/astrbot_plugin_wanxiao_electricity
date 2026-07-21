@@ -1,24 +1,91 @@
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
+"""AstrBot entry point for querying Wanxiao water and electricity balances."""
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
-    def __init__(self, context: Context):
+from typing import Any, Optional, Tuple
+
+import aiohttp
+from astrbot.api import AstrBotConfig
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star
+
+from wanxiao_client import (
+    DEFAULT_TIMEOUT_SECONDS,
+    NoBoundRoomsError,
+    WanxiaoClient,
+    WanxiaoError,
+    format_query_report,
+)
+
+
+class WanxiaoElectricityPlugin(Star):
+    """Query the configured Wanxiao account without storing room data locally."""
+
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._client: Optional[WanxiaoClient] = None
+        self._client_config: Optional[Tuple[str, str]] = None
 
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+        """Keep loading successful even before the administrator fills in config."""
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+    @staticmethod
+    def _config_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _get_credentials(self) -> Optional[Tuple[str, str]]:
+        school_code = self._config_text(self.config.get("school_code", ""))
+        student_account = self._config_text(self.config.get("student_account", ""))
+        if not school_code or not student_account:
+            return None
+        return school_code, student_account
+
+    def _get_client(self, credentials: Tuple[str, str]) -> WanxiaoClient:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT_SECONDS)
+            )
+            self._client = None
+            self._client_config = None
+
+        if self._client is None or self._client_config != credentials:
+            self._client = WanxiaoClient(
+                school_code=credentials[0],
+                student_account=credentials[1],
+                session=self._session,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            )
+            self._client_config = credentials
+        return self._client
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("查水电")
+    async def query_water_and_electricity(self, event: AstrMessageEvent):
+        """查询当前配置账号绑定房间的水电信息。"""
+        credentials = self._get_credentials()
+        if credentials is None:
+            yield event.plain_result(
+                "请先在插件配置中填写 school_code 和 student_account。"
+            )
+            return
+
+        try:
+            results = await self._get_client(credentials).query_bound_rooms()
+        except NoBoundRoomsError:
+            yield event.plain_result("未找到已绑定的房间。")
+            return
+        except WanxiaoError:
+            yield event.plain_result("水电查询服务暂时不可用，请稍后再试。")
+            return
+
+        yield event.plain_result(format_query_report(results))
 
     async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        """Close the aiohttp session created and owned by this plugin."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+        self._client = None
+        self._client_config = None

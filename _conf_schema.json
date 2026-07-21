@@ -1,0 +1,14 @@
+{
+  "school_code": {
+    "type": "string",
+    "description": "完美校园学校代码",
+    "hint": "按字符串填写，前导零会被保留。",
+    "default": ""
+  },
+  "student_account": {
+    "type": "string",
+    "description": "完美校园学号",
+    "hint": "按字符串填写，前导零会被保留。",
+    "default": ""
+  }
+}
