@@ -1,14 +1,50 @@
 {
+  "accounts": {
+    "type": "template_list",
+    "description": "完美校园账号",
+    "hint": "可添加多个账号；仅查询已启用的账号。",
+    "templates": {
+      "wanxiao_account": {
+        "name": "完美校园账号",
+        "hint": "学校代码和学号请按字符串填写，前导零会被保留。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "账号备注（可选）",
+            "hint": "用于区分查询结果，例如宿舍或家人。",
+            "default": ""
+          },
+          "enabled": {
+            "type": "bool",
+            "description": "启用该账号",
+            "default": true
+          },
+          "school_code": {
+            "type": "string",
+            "description": "完美校园学校代码",
+            "hint": "按字符串填写，前导零会被保留。",
+            "default": ""
+          },
+          "student_account": {
+            "type": "string",
+            "description": "完美校园学号",
+            "hint": "按字符串填写，前导零会被保留。",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
   "school_code": {
     "type": "string",
-    "description": "完美校园学校代码",
-    "hint": "按字符串填写，前导零会被保留。",
+    "description": "旧版单账号配置：完美校园学校代码",
+    "hint": "仅当 accounts 为空时作为兼容回退；按字符串填写，前导零会被保留。",
     "default": ""
   },
   "student_account": {
     "type": "string",
-    "description": "完美校园学号",
-    "hint": "按字符串填写，前导零会被保留。",
+    "description": "旧版单账号配置：完美校园学号",
+    "hint": "仅当 accounts 为空时作为兼容回退；按字符串填写，前导零会被保留。",
     "default": ""
   }
 }
