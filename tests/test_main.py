@@ -72,7 +72,7 @@ def account_entry(
     }
 
 
-def load_main_with_fake_astrbot(monkeypatch):
+def load_main_with_fake_astrbot(monkeypatch, module_name="main"):
     astrbot_module = types.ModuleType("astrbot")
     api_module = types.ModuleType("astrbot.api")
     event_module = types.ModuleType("astrbot.api.event")
@@ -114,8 +114,34 @@ def load_main_with_fake_astrbot(monkeypatch):
     monkeypatch.setitem(sys.modules, "astrbot.api", api_module)
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star_module)
-    sys.modules.pop("main", None)
-    return importlib.import_module("main")
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    return importlib.import_module(module_name)
+
+
+def test_package_load_uses_relative_wanxiao_client_import(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    package_name = root.name
+    module_name = "{}.main".format(package_name)
+    client_module_name = "{}.wanxiao_client".format(package_name)
+    sentinel_client = types.ModuleType("wanxiao_client")
+    sentinel_client.DEFAULT_TIMEOUT_SECONDS = object()
+    sentinel_client.NoBoundRoomsError = type("NoBoundRoomsError", (Exception,), {})
+    sentinel_client.WanxiaoClient = type("WanxiaoClient", (), {})
+    sentinel_client.WanxiaoError = type("WanxiaoError", (Exception,), {})
+    sentinel_client.format_query_report = lambda results: "sentinel"
+
+    monkeypatch.syspath_prepend(str(root.parent))
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, client_module_name, raising=False)
+    monkeypatch.setitem(sys.modules, "wanxiao_client", sentinel_client)
+
+    main = load_main_with_fake_astrbot(monkeypatch, module_name)
+    package_client = sys.modules.get(client_module_name)
+
+    assert package_client is not None
+    assert main.WanxiaoClient is package_client.WanxiaoClient
+    assert main.WanxiaoClient.__module__ == client_module_name
+    assert main.WanxiaoClient is not sentinel_client.WanxiaoClient
 
 
 async def collect(async_generator):

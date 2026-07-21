@@ -11,13 +11,22 @@ from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from wanxiao_client import (
-    DEFAULT_TIMEOUT_SECONDS,
-    NoBoundRoomsError,
-    WanxiaoClient,
-    WanxiaoError,
-    format_query_report,
-)
+if __package__:
+    from .wanxiao_client import (
+        DEFAULT_TIMEOUT_SECONDS,
+        NoBoundRoomsError,
+        WanxiaoClient,
+        WanxiaoError,
+        format_query_report,
+    )
+else:
+    from wanxiao_client import (
+        DEFAULT_TIMEOUT_SECONDS,
+        NoBoundRoomsError,
+        WanxiaoClient,
+        WanxiaoError,
+        format_query_report,
+    )
 
 MAX_ACCOUNT_COUNT = 16
 MAX_ACCOUNT_FIELD_LENGTH = 64
