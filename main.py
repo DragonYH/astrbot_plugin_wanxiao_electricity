@@ -32,7 +32,6 @@ MAX_ACCOUNT_COUNT = 16
 MAX_ACCOUNT_FIELD_LENGTH = 64
 MAX_ACCOUNT_NAME_LENGTH = 32
 MAX_REPORT_CHARS = 3500
-_MISSING = object()
 
 
 class AccountConfigurationError(ValueError):
@@ -85,12 +84,6 @@ class WanxiaoElectricityPlugin(Star):
         """Keep loading successful even before the administrator fills in config."""
 
     @staticmethod
-    def _config_text(value: Any) -> str:
-        if not isinstance(value, str):
-            return ""
-        return value.strip()
-
-    @staticmethod
     def _parse_account_name(value: Any) -> str:
         if not isinstance(value, str):
             raise AccountConfigurationError("账号配置不正确，请检查 accounts 配置。")
@@ -110,38 +103,12 @@ class WanxiaoElectricityPlugin(Star):
             raise AccountConfigurationError("账号配置不正确，请检查 accounts 配置。")
         return value
 
-    def _get_legacy_accounts(self) -> List[AccountConfig]:
-        raw_school_code = self.config.get("school_code", "")
-        raw_student_account = self.config.get("student_account", "")
-        if raw_school_code is None:
-            raw_school_code = ""
-        if raw_student_account is None:
-            raw_student_account = ""
-        if not isinstance(raw_school_code, str) or not isinstance(
-            raw_student_account, str
-        ):
-            raise AccountConfigurationError("账号配置不正确，请检查 accounts 配置。")
-
-        school_code = raw_school_code.strip()
-        student_account = raw_student_account.strip()
-        if not school_code or not student_account:
-            return []
-        return [
-            AccountConfig(
-                name="",
-                school_code=self._parse_account_field(school_code),
-                student_account=self._parse_account_field(student_account),
-            )
-        ]
-
     def _get_accounts(self) -> List[AccountConfig]:
-        configured_accounts = self.config.get("accounts", _MISSING)
-        if configured_accounts is _MISSING or (
-            isinstance(configured_accounts, list) and not configured_accounts
-        ):
-            return self._get_legacy_accounts()
+        configured_accounts = self.config.get("accounts", [])
         if not isinstance(configured_accounts, list):
             raise AccountConfigurationError("账号配置不正确，请检查 accounts 配置。")
+        if not configured_accounts:
+            return []
         if len(configured_accounts) > MAX_ACCOUNT_COUNT:
             raise AccountConfigurationError("账号最多只能配置 16 个条目。")
 
@@ -178,13 +145,6 @@ class WanxiaoElectricityPlugin(Star):
                 "未找到已启用的有效账号，请检查 accounts 配置。"
             )
         return accounts
-
-    def _get_credentials(self) -> Optional[Tuple[str, str]]:
-        """Keep the former single-account helper available for compatibility."""
-        accounts = self._get_accounts()
-        if len(accounts) != 1:
-            return None
-        return accounts[0].credentials
 
     def _get_client(self, credentials: Tuple[str, str]) -> WanxiaoClient:
         if self._terminated:
@@ -370,9 +330,7 @@ class WanxiaoElectricityPlugin(Star):
 
         if not accounts:
             await self._sync_clients(())
-            return [
-                "请先在插件配置中添加并启用账号，或填写旧版 school_code 和 student_account。"
-            ]
+            return ["请先在插件配置中添加并启用账号。"]
 
         clients = await self._sync_clients(accounts)
         tasks: List[asyncio.Task] = []

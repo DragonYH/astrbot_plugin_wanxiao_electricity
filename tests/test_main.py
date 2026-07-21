@@ -166,8 +166,8 @@ def test_schema_and_metadata_declare_template_list_and_minimum_version():
     }
     assert template["items"]["school_code"]["default"] == ""
     assert template["items"]["student_account"]["default"] == ""
-    assert "旧版单账号配置" in schema["school_code"]["description"]
-    assert "旧版单账号配置" in schema["student_account"]["description"]
+    assert "school_code" not in schema
+    assert "student_account" not in schema
     assert metadata["version"] == "v1.1.0"
     assert metadata["astrbot_version"] == ">=4.10.4"
 
@@ -178,9 +178,7 @@ def test_plugin_loads_without_account_configuration(monkeypatch):
 
     messages = asyncio.run(collect(plugin.query_water_and_electricity(FakeEvent())))
 
-    assert messages == [
-        "请先在插件配置中添加并启用账号，或填写旧版 school_code 和 student_account。"
-    ]
+    assert messages == ["请先在插件配置中添加并启用账号。"]
     assert plugin._session is None
     assert (
         main.WanxiaoElectricityPlugin.query_water_and_electricity.command_name
@@ -219,9 +217,29 @@ def test_template_list_parsing_preserves_leading_zero_and_hides_secrets(monkeypa
     assert "****1234" in representation
 
 
-def test_accounts_take_precedence_and_empty_list_falls_back_to_legacy(monkeypatch):
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"accounts": []},
+        {"school_code": "001", "student_account": "00001234"},
+        {
+            "accounts": [],
+            "school_code": "001",
+            "student_account": "00001234",
+        },
+    ],
+)
+def test_missing_or_empty_accounts_never_read_legacy_fields(monkeypatch, config):
     main = load_main_with_fake_astrbot(monkeypatch)
-    preferred = main.WanxiaoElectricityPlugin(
+    plugin = main.WanxiaoElectricityPlugin(context=None, config=config)
+
+    assert plugin._get_accounts() == []
+
+
+def test_accounts_ignore_residual_legacy_fields(monkeypatch):
+    main = load_main_with_fake_astrbot(monkeypatch)
+    plugin = main.WanxiaoElectricityPlugin(
         context=None,
         config={
             "accounts": [account_entry(student_account="2024000002")],
@@ -229,22 +247,13 @@ def test_accounts_take_precedence_and_empty_list_falls_back_to_legacy(monkeypatc
             "student_account": "2024000001",
         },
     )
-    fallback = main.WanxiaoElectricityPlugin(
-        context=None,
-        config={
-            "accounts": [],
-            "school_code": "001",
-            "student_account": "00001234",
-        },
-    )
 
-    assert [account.student_account for account in preferred._get_accounts()] == [
+    assert [account.student_account for account in plugin._get_accounts()] == [
         "2024000002"
     ]
-    assert fallback._get_credentials() == ("001", "00001234")
 
 
-def test_nonempty_disabled_or_invalid_accounts_never_fall_back_to_legacy(monkeypatch):
+def test_nonempty_disabled_or_invalid_accounts_keep_existing_errors(monkeypatch):
     main = load_main_with_fake_astrbot(monkeypatch)
     disabled = main.WanxiaoElectricityPlugin(
         context=None,
