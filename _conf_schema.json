@@ -6,7 +6,7 @@
     "templates": {
       "wanxiao_account": {
         "name": "完美校园账号",
-        "hint": "学校代码和学号请按字符串填写，前导零会被保留。",
+        "hint": "请填写完整学校名称和学号；学校代码会自动解析。",
         "items": {
           "name": {
             "type": "string",
@@ -19,10 +19,10 @@
             "description": "启用该账号",
             "default": true
           },
-          "school_code": {
+          "school_name": {
             "type": "string",
-            "description": "完美校园学校代码",
-            "hint": "按字符串填写，前导零会被保留。",
+            "description": "学校名称",
+            "hint": "请填写完整学校名称，学校代码会自动解析。",
             "default": ""
           },
           "student_account": {

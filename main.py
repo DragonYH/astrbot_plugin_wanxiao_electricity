@@ -12,6 +12,13 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 if __package__:
+    from .school_directory import (
+        AmbiguousSchoolNameError,
+        InvalidSchoolNameError,
+        SchoolDirectory,
+        SchoolDirectoryUnavailableError,
+        SchoolNotFoundError,
+    )
     from .wanxiao_client import (
         DEFAULT_TIMEOUT_SECONDS,
         NoBoundRoomsError,
@@ -20,6 +27,13 @@ if __package__:
         format_query_report,
     )
 else:
+    from school_directory import (
+        AmbiguousSchoolNameError,
+        InvalidSchoolNameError,
+        SchoolDirectory,
+        SchoolDirectoryUnavailableError,
+        SchoolNotFoundError,
+    )
     from wanxiao_client import (
         DEFAULT_TIMEOUT_SECONDS,
         NoBoundRoomsError,
@@ -32,6 +46,7 @@ MAX_ACCOUNT_COUNT = 16
 MAX_ACCOUNT_FIELD_LENGTH = 64
 MAX_ACCOUNT_NAME_LENGTH = 32
 MAX_REPORT_CHARS = 3500
+SCHOOL_DIRECTORY = SchoolDirectory()
 
 
 class AccountConfigurationError(ValueError):
@@ -114,7 +129,7 @@ class WanxiaoElectricityPlugin(Star):
 
         accounts: List[AccountConfig] = []
         seen_credentials: Set[Tuple[str, str]] = set()
-        for entry in configured_accounts:
+        for account_index, entry in enumerate(configured_accounts, start=1):
             if not isinstance(entry, Mapping):
                 raise AccountConfigurationError(
                     "账号配置不正确，请检查 accounts 配置。"
@@ -128,9 +143,38 @@ class WanxiaoElectricityPlugin(Star):
             if not enabled:
                 continue
 
+            if "school_name" not in entry and "school_code" in entry:
+                raise AccountConfigurationError(
+                    "第 {} 个账号需要从旧版配置迁移，请改为填写完整学校名称。".format(
+                        account_index
+                    )
+                )
+            try:
+                school_code = SCHOOL_DIRECTORY.resolve(entry.get("school_name"))
+            except InvalidSchoolNameError as error:
+                raise AccountConfigurationError(
+                    "账号配置不正确，请检查 accounts 配置。"
+                ) from error
+            except SchoolNotFoundError as error:
+                raise AccountConfigurationError(
+                    "第 {} 个账号的学校名称未在内置学校列表中找到，请填写完整名称。".format(
+                        account_index
+                    )
+                ) from error
+            except AmbiguousSchoolNameError as error:
+                raise AccountConfigurationError(
+                    "第 {} 个账号的学校名称在内置学校列表中存在歧义，请联系插件维护者。".format(
+                        account_index
+                    )
+                ) from error
+            except SchoolDirectoryUnavailableError as error:
+                raise AccountConfigurationError(
+                    "内置学校列表不可用，请联系插件维护者。"
+                ) from error
+
             account = AccountConfig(
                 name=self._parse_account_name(entry.get("name", "")),
-                school_code=self._parse_account_field(entry.get("school_code", "")),
+                school_code=school_code,
                 student_account=self._parse_account_field(
                     entry.get("student_account", "")
                 ),

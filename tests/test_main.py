@@ -59,20 +59,41 @@ def account_entry(
     *,
     name="",
     enabled=True,
-    school_code="100",
+    school_name="测试大学",
     student_account="2024000001",
     **extra,
 ):
     return {
         "name": name,
         "enabled": enabled,
-        "school_code": school_code,
+        "school_name": school_name,
         "student_account": student_account,
         **extra,
     }
 
 
-def load_main_with_fake_astrbot(monkeypatch, module_name="main"):
+class _TestSchoolDirectory:
+    codes = {
+        "测试大学": "100",
+        "第二测试大学": "200",
+        "前导零学校": "001",
+    }
+
+    def __init__(self, main):
+        self.main = main
+
+    def resolve(self, school_name):
+        if not isinstance(school_name, str) or not school_name.strip():
+            raise self.main.InvalidSchoolNameError()
+        code = self.codes.get(" ".join(school_name.split()))
+        if code is None:
+            raise self.main.SchoolNotFoundError()
+        return code
+
+
+def load_main_with_fake_astrbot(
+    monkeypatch, module_name="main", use_test_school_directory=True
+):
     astrbot_module = types.ModuleType("astrbot")
     api_module = types.ModuleType("astrbot.api")
     event_module = types.ModuleType("astrbot.api.event")
@@ -115,33 +136,52 @@ def load_main_with_fake_astrbot(monkeypatch, module_name="main"):
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star_module)
     monkeypatch.delitem(sys.modules, module_name, raising=False)
-    return importlib.import_module(module_name)
+    main = importlib.import_module(module_name)
+    if use_test_school_directory:
+        main.SCHOOL_DIRECTORY = _TestSchoolDirectory(main)
+    return main
 
 
-def test_package_load_uses_relative_wanxiao_client_import(monkeypatch):
+def test_package_load_uses_relative_dependency_imports(monkeypatch):
     root = Path(__file__).resolve().parents[1]
     package_name = root.name
     module_name = "{}.main".format(package_name)
     client_module_name = "{}.wanxiao_client".format(package_name)
+    directory_module_name = "{}.school_directory".format(package_name)
     sentinel_client = types.ModuleType("wanxiao_client")
     sentinel_client.DEFAULT_TIMEOUT_SECONDS = object()
     sentinel_client.NoBoundRoomsError = type("NoBoundRoomsError", (Exception,), {})
     sentinel_client.WanxiaoClient = type("WanxiaoClient", (), {})
     sentinel_client.WanxiaoError = type("WanxiaoError", (Exception,), {})
     sentinel_client.format_query_report = lambda results: "sentinel"
+    sentinel_directory = types.ModuleType("school_directory")
+    for name in (
+        "AmbiguousSchoolNameError",
+        "InvalidSchoolNameError",
+        "SchoolDirectory",
+        "SchoolDirectoryUnavailableError",
+        "SchoolNotFoundError",
+    ):
+        setattr(sentinel_directory, name, type(name, (Exception,), {}))
 
     monkeypatch.syspath_prepend(str(root.parent))
     monkeypatch.delitem(sys.modules, package_name, raising=False)
     monkeypatch.delitem(sys.modules, client_module_name, raising=False)
+    monkeypatch.delitem(sys.modules, directory_module_name, raising=False)
     monkeypatch.setitem(sys.modules, "wanxiao_client", sentinel_client)
+    monkeypatch.setitem(sys.modules, "school_directory", sentinel_directory)
 
     main = load_main_with_fake_astrbot(monkeypatch, module_name)
     package_client = sys.modules.get(client_module_name)
+    package_directory = sys.modules.get(directory_module_name)
 
     assert package_client is not None
+    assert package_directory is not None
     assert main.WanxiaoClient is package_client.WanxiaoClient
     assert main.WanxiaoClient.__module__ == client_module_name
     assert main.WanxiaoClient is not sentinel_client.WanxiaoClient
+    assert main.SchoolDirectory is package_directory.SchoolDirectory
+    assert main.SchoolDirectory is not sentinel_directory.SchoolDirectory
 
 
 async def collect(async_generator):
@@ -164,11 +204,24 @@ def test_schema_and_metadata_declare_template_list_and_minimum_version():
         "description": "启用该账号",
         "default": True,
     }
-    assert template["items"]["school_code"]["default"] == ""
+    assert template["items"]["school_name"] == {
+        "type": "string",
+        "description": "学校名称",
+        "hint": "请填写完整学校名称，学校代码会自动解析。",
+        "default": "",
+    }
     assert template["items"]["student_account"]["default"] == ""
-    assert "school_code" not in schema
+
+    def schema_keys(value):
+        if isinstance(value, dict):
+            return set(value).union(*(schema_keys(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(schema_keys(item) for item in value))
+        return set()
+
+    assert "school_code" not in schema_keys(schema)
     assert "student_account" not in schema
-    assert metadata["version"] == "v1.1.0"
+    assert metadata["version"] == "v2.0.0"
     assert metadata["astrbot_version"] == ">=4.10.4"
 
 
@@ -198,7 +251,7 @@ def test_template_list_parsing_preserves_leading_zero_and_hides_secrets(monkeypa
             "accounts": [
                 account_entry(
                     name="  宿舍  ",
-                    school_code=" 001 ",
+                    school_name="  前导零学校 ",
                     student_account=" 00001234 ",
                     __template_key="wanxiao_account",
                 )
@@ -215,6 +268,62 @@ def test_template_list_parsing_preserves_leading_zero_and_hides_secrets(monkeypa
     assert "001" not in representation
     assert "00001234" not in representation
     assert "****1234" in representation
+
+    captured = {}
+
+    class CapturingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(main, "WanxiaoClient", CapturingClient)
+    plugin._session = FakeSession()
+    plugin._get_client(accounts[0].credentials)
+    assert captured["school_code"] == "001"
+    assert captured["student_account"] == "00001234"
+
+
+def test_bundled_directory_resolves_production_school_before_client_construction(
+    monkeypatch,
+):
+    main = load_main_with_fake_astrbot(
+        monkeypatch, use_test_school_directory=False
+    )
+    assert isinstance(main.SCHOOL_DIRECTORY, main.SchoolDirectory)
+
+    captured = {}
+
+    class CapturingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    def unexpected_network_resource(*args, **kwargs):
+        pytest.fail("production directory integration test must stay offline")
+
+    monkeypatch.setattr(main, "WanxiaoClient", CapturingClient)
+    monkeypatch.setattr(main.aiohttp, "ClientSession", unexpected_network_resource)
+    plugin = main.WanxiaoElectricityPlugin(
+        context=None,
+        config={
+            "accounts": [
+                account_entry(
+                    school_name="郑州大学", student_account="2024000001"
+                )
+            ]
+        },
+    )
+
+    accounts = plugin._get_accounts()
+
+    assert accounts == [
+        main.AccountConfig(
+            name="", school_code="11", student_account="2024000001"
+        )
+    ]
+    plugin._session = FakeSession()
+    plugin._get_client(accounts[0].credentials)
+    assert captured["school_code"] == "11"
+    assert captured["student_account"] == "2024000001"
+    assert captured["session"] is plugin._session
 
 
 @pytest.mark.parametrize(
@@ -242,15 +351,89 @@ def test_accounts_ignore_residual_legacy_fields(monkeypatch):
     plugin = main.WanxiaoElectricityPlugin(
         context=None,
         config={
-            "accounts": [account_entry(student_account="2024000002")],
+            "accounts": [
+                account_entry(
+                    student_account="2024000002", school_code="legacy-code"
+                )
+            ],
             "school_code": "100",
             "student_account": "2024000001",
         },
     )
 
-    assert [account.student_account for account in plugin._get_accounts()] == [
-        "2024000002"
-    ]
+    accounts = plugin._get_accounts()
+    assert [account.student_account for account in accounts] == ["2024000002"]
+    assert accounts[0].school_code == "100"
+
+
+def test_legacy_school_code_only_entry_requires_migration(monkeypatch):
+    main = load_main_with_fake_astrbot(monkeypatch)
+    plugin = main.WanxiaoElectricityPlugin(
+        context=None,
+        config={
+            "accounts": [
+                {"school_code": "001", "student_account": "2024000001"}
+            ]
+        },
+    )
+
+    with pytest.raises(
+        main.AccountConfigurationError, match="需要从旧版配置迁移"
+    ) as error:
+        plugin._get_accounts()
+
+    assert "001" not in str(error.value)
+    assert "school_code" not in str(error.value)
+
+
+def test_unmatched_school_name_reports_entry_index_without_secrets(monkeypatch):
+    main = load_main_with_fake_astrbot(monkeypatch)
+    student_account = "sensitive-student-account"
+    plugin = main.WanxiaoElectricityPlugin(
+        context=None,
+        config={
+            "accounts": [
+                account_entry(enabled=False),
+                account_entry(
+                    school_name="未收录学校", student_account=student_account
+                ),
+            ]
+        },
+    )
+
+    with pytest.raises(main.AccountConfigurationError) as error:
+        plugin._get_accounts()
+
+    assert str(error.value) == (
+        "第 2 个账号的学校名称未在内置学校列表中找到，请填写完整名称。"
+    )
+    assert student_account not in str(error.value)
+
+
+def test_unavailable_directory_does_not_leak_account_details(monkeypatch):
+    main = load_main_with_fake_astrbot(monkeypatch)
+    student_account = "sensitive-student-account"
+
+    class UnavailableDirectory:
+        def resolve(self, school_name):
+            raise main.SchoolDirectoryUnavailableError()
+
+    main.SCHOOL_DIRECTORY = UnavailableDirectory()
+    plugin = main.WanxiaoElectricityPlugin(
+        context=None,
+        config={
+            "accounts": [
+                account_entry(student_account=student_account, school_code="private")
+            ]
+        },
+    )
+
+    with pytest.raises(main.AccountConfigurationError) as error:
+        plugin._get_accounts()
+
+    assert str(error.value) == "内置学校列表不可用，请联系插件维护者。"
+    assert student_account not in str(error.value)
+    assert "private" not in str(error.value)
 
 
 def test_nonempty_disabled_or_invalid_accounts_keep_existing_errors(monkeypatch):
@@ -331,9 +514,10 @@ def test_account_limit_accepts_sixteen_and_rejects_seventeen(monkeypatch):
         [account_entry(enabled="true")],
         [account_entry(name="x" * 33)],
         [account_entry(name="bad\x00name")],
-        [account_entry(school_code="100 1")],
+        [account_entry(school_name=None)],
+        [account_entry(school_name="")],
         [account_entry(student_account="2024\t000001")],
-        [account_entry(school_code="x" * 65)],
+        [account_entry(school_name="未收录学校")],
         [account_entry(student_account="")],
     ],
 )
@@ -402,12 +586,12 @@ def test_same_name_and_suffix_accounts_remain_distinguishable(monkeypatch):
             "accounts": [
                 account_entry(
                     name="宿舍",
-                    school_code="100",
+                    school_name="测试大学",
                     student_account=first_account,
                 ),
                 account_entry(
                     name="宿舍",
-                    school_code="200",
+                    school_name="第二测试大学",
                     student_account=second_account,
                 ),
             ]
